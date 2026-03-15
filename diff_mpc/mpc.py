@@ -246,7 +246,7 @@ class MPC(Module):
 
         n_not_improved = 0
         for i in range(self.lqr_iter):
-            u = Variable(util.detach_maybe(u), requires_grad=True)
+            u = util.detach_maybe(u).requires_grad_(True)
             # Linearize the dynamics around the current trajectory.
             x = util.get_traj(self.T, u, x_init=x_init, dynamics=dx)
             if isinstance(dx, LinDx):
@@ -329,8 +329,8 @@ class MPC(Module):
                     print("Detaching and *not* backpropping through the bad examples.")
 
                 I = for_out.full_du_norm < self.eps
-                Ix = Variable(I.unsqueeze(0).unsqueeze(2).expand_as(x)).type_as(x.data)
-                Iu = Variable(I.unsqueeze(0).unsqueeze(2).expand_as(u)).type_as(u.data)
+                Ix = I.unsqueeze(0).unsqueeze(2).expand_as(x).type_as(x.data)
+                Iu = I.unsqueeze(0).unsqueeze(2).expand_as(u).type_as(u.data)
                 x = x*Ix + x.clone().detach()*(1.-Ix)
                 u = u*Iu + u.clone().detach()*(1.-Iu)
 
@@ -358,7 +358,7 @@ class MPC(Module):
                 back_eps=self.back_eps,
                 no_op_forward=no_op_forward,
             )
-            e = Variable(torch.Tensor())
+            e = torch.Tensor()
             x, u = _lqr(x_init, C, c, F, f if f is not None else e)
 
             return x, u, _lqr
@@ -396,7 +396,7 @@ class MPC(Module):
                 _f = torch.cat((
                     torch.zeros(self.T-1, n_batch, self.n_ctrl).type_as(f),f), 2)
             else:
-                _f = Variable(torch.Tensor())
+                _f = torch.Tensor()
 
             u_data = util.detach_maybe(u)
             if self.prev_ctrl is not None:
@@ -411,7 +411,7 @@ class MPC(Module):
             utm1s = torch.cat((prev_u, u_data[:-1])).clone()
             _x = torch.cat((utm1s, x), 2)
 
-            _x_init = torch.cat((Variable(prev_u[0]), x_init), 1)
+            _x_init = torch.cat((prev_u[0], x_init), 1)
 
             if not isinstance(dynamics, LinDx):
                 _dynamics = CtrlPassthroughDynamics(dynamics)
@@ -451,7 +451,7 @@ class MPC(Module):
     def approximate_cost(self, x, u, Cf, diff=True):
         with torch.enable_grad():
             tau = torch.cat((x, u), dim=2).data
-            tau = Variable(tau, requires_grad=True)
+            tau = tau.requires_grad_(True)
             if self.slew_rate_penalty is not None:
                 print("""
 MPC Error: Using a non-convex cost with a slew rate penalty is not yet implemented.
@@ -497,9 +497,8 @@ More details: https://github.com/locuslab/mpc.pytorch/issues/12
         n_batch = x[0].size(0)
 
         if self.grad_method == GradMethods.ANALYTIC:
-            _u = Variable(u[:-1].view(-1, self.n_ctrl), requires_grad=True)
-            _x = Variable(x[:-1].contiguous().view(-1, self.n_state),
-                          requires_grad=True)
+            _u = u[:-1].view(-1, self.n_ctrl).detach().requires_grad_(True)
+            _x = x[:-1].contiguous().view(-1, self.n_state).detach().requires_grad_(True)
 
             # This inefficiently calls dynamics again, but is worth it because
             # we can efficiently compute grad_input for every time step at once.
@@ -523,8 +522,6 @@ More details: https://github.com/locuslab/mpc.pytorch/issues/12
             S = S.contiguous().view(self.T-1, n_batch, self.n_state, self.n_ctrl)
             F = torch.cat((R, S), 3)
 
-            if not diff:
-                F, f = list(map(Variable, [F, f]))
             return F, f
         else:
             # TODO: This is inefficient and confusing.
@@ -533,8 +530,8 @@ More details: https://github.com/locuslab/mpc.pytorch/issues/12
             F, f = [], []
             for t in range(self.T):
                 if t < self.T-1:
-                    xt = Variable(x[t], requires_grad=True)
-                    ut = Variable(u[t], requires_grad=True)
+                    xt = x[t].detach().requires_grad_(True)
+                    ut = u[t].detach().requires_grad_(True)
                     xut = torch.cat((xt, ut), 1)
                     new_x = dynamics(xt, ut)
 
@@ -600,6 +597,4 @@ More details: https://github.com/locuslab/mpc.pytorch/issues/12
 
             F = torch.stack(F, 0)
             f = torch.stack(f, 0)
-            if not diff:
-                F, f = list(map(Variable, [F, f]))
             return F, f

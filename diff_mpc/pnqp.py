@@ -15,29 +15,25 @@ def pnqp(H, q, lower, upper, x_init=None, n_iter=20):
         if n == 1:
             x_init = -(1./H.squeeze(2))*q
         else:
-            H_lu = H.btrifact()
-            x_init = -q.btrisolve(*H_lu) # Clamped in the x assignment.
+            H_lu = torch.linalg.lu_factor(H)
+            LU, pivots = H_lu
+            x_init = -torch.linalg.lu_solve(LU, pivots, q.unsqueeze(-1)).squeeze(-1)
     else:
         x_init = x_init.clone() # Don't over-write the original x_init.
 
     x = util.eclamp(x_init, lower, upper)
 
     # Active examples in the batch.
-    J = torch.ones(n_batch).type_as(x).byte()
+    J = torch.ones(n_batch, dtype=torch.bool, device=x.device)
 
     for i in range(n_iter):
         g = util.bmv(H, x) + q
         Ic = ((x == lower) & (g > 0)) | ((x == upper) & (g < 0))
-        If = 1-Ic
+        If = ~Ic
 
-        if If.is_cuda:
-            Hff_I = util.bger(If.float(), If.float()).type_as(If)
-            not_Hff_I = 1-Hff_I
-            Hfc_I = util.bger(If.float(), Ic.float()).type_as(If)
-        else:
-            Hff_I = util.bger(If, If)
-            not_Hff_I = 1-Hff_I
-            Hfc_I = util.bger(If, Ic)
+        Hff_I = util.bger(If.float(), If.float()).bool()
+        not_Hff_I = ~Hff_I
+        Hfc_I = util.bger(If.float(), Ic.float()).bool()
 
         g_ = g.clone()
         g_[Ic] = 0.
@@ -48,8 +44,9 @@ def pnqp(H, q, lower, upper, x_init=None, n_iter=20):
         if n == 1:
             dx = -(1./H_.squeeze(2))*g_
         else:
-            H_lu_ = H_.btrifact()
-            dx = -g_.btrisolve(*H_lu_)
+            H_lu_ = torch.linalg.lu_factor(H_)
+            LU_, pivots_ = H_lu_
+            dx = -torch.linalg.lu_solve(LU_, pivots_, g_.unsqueeze(-1)).squeeze(-1)
 
         J = torch.norm(dx, 2, 1) >= 1e-4
         m = J.sum().item() # Number of active examples in the batch.
